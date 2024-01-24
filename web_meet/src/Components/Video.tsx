@@ -96,7 +96,7 @@ const Video = ({
       {kind === "video" ? (
         <video
           style={{
-            objectFit: "cover",
+            // objectFit: "cover",
             width,
             height,
             top,

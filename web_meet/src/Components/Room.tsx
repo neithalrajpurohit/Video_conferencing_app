@@ -14,7 +14,7 @@ import {
 import Video from "./Video";
 
 const socket = io(
-  "https://b3fd-2405-201-4018-9231-e1fc-e077-b362-9a1f.ngrok-free.app", //---3000port
+  "http://localhost:3443", //---3000port
   {
     extraHeaders: {
       "ngrok-skip-browser-warning": "false",
@@ -22,7 +22,7 @@ const socket = io(
   }
 );
 const socket2 = io(
-  "https://0edf-2405-201-4018-9231-718c-b57-8165-95ed.ngrok-free.app",
+  "https://192.168.29.249:8000",
   {
     path: "/ws/socket.io",
     extraHeaders: {
@@ -30,6 +30,7 @@ const socket2 = io(
     },
   }
 );
+
 let params: any = {
   // mediasoup params
   encodings: [
@@ -66,6 +67,7 @@ const Room = () => {
   const [consumerTransports, setConsumerTransports] = useState<any>([]);
   const [userId, setUserId] = useState(uuidv4());
   const [countFrames, setCountFrames] = useState(0);
+  const [groupCount, setGroupCount] = useState(0);
   const location = useLocation();
   const paramId = useParams();
 
@@ -82,6 +84,7 @@ const Room = () => {
   let disabledVideo = useRef<any>(false);
 
   const [roomName, setRoomName] = useState<any>("room1");
+  const [usersId, setUsersId] = useState<any>("room1");
   const [count, setCount] = useState<any>(0);
   const exerciseRef = useRef(count);
   const exerciseNameRef = useRef("");
@@ -95,13 +98,15 @@ const Room = () => {
   useEffect(() => {
     if (location.state) {
       setRoomName(location.state.room);
+      setUsersId(location.state.user)
     }
   }, [location]);
 
   useEffect(() => {
     getLocalStream();
   }, []);
-
+  
+  let sec = 0;
   useEffect(() => {
     if (ref.current) {
       ref.current.addEventListener("loadedmetadata", () => {
@@ -111,20 +116,80 @@ const Room = () => {
     }
   }, [ref.current]);
 
+  const textTOSpeech = (data: any) => {
+    if (sec != data) {
+      sec = data;
+
+       // Adjust the rate as needed (e.g., 2.0 for double speed)
+      //  if (data <= 5) {
+        // Adjust the rate as needed (e.g., 1.1 for slightly faster)
+        const rate = 1.1;
+  
+        const value = new SpeechSynthesisUtterance(data);
+        value.rate = rate;
+  
+        // Enqueue the utterance for processing
+        enqueueSpeech(value);
+      // }
+      // window.speechSynthesis.speak(value)
+    }
+    
+  }
+
+   // Queue to manage SpeechSynthesisUtterance instances
+   const speechQueue: any[] = [];
+
+   // Function to enqueue SpeechSynthesisUtterance instances
+   const enqueueSpeech = (utterance:any) => {
+     speechQueue.push(utterance);
+
+     // If the queue was empty, start processing the queue
+     if (speechQueue.length === 1) {
+       processSpeechQueue();
+     }
+   };
+
+   // Function to process the speech queue
+   const processSpeechQueue = () => {
+     if (speechQueue.length > 0) {
+       const utterance = speechQueue[0];
+
+       // Set up event listeners for the utterance
+       utterance.onend = () => {
+         // Remove the processed utterance from the queue
+         speechQueue.shift();
+
+         // Process the next utterance (if any) in the queue
+         processSpeechQueue();
+       };
+
+       // Speak the utterance
+       window.speechSynthesis.speak(utterance);
+     }
+   };
+
   useLayoutEffect(() => {
     socket2.on("capture_frames", (data: any) => {
       console.log(data, "dataaa");
       setCount(data.count);
+      textTOSpeech(data.remaining_sec);
       exerciseRef.current! = data.count;
       exerciseNameRef.current! = data.type;
       setExerciseName(data.type);
     });
+
   }, [socket2]);
 
   useEffect(() => {
     socket2.on("success", () => {
       console.log("connected");
     });
+
+    socket2.on("user-count-updated", ({userCount}) => {
+      console.log(`Total users in the room : ${userCount}`)
+      setGroupCount(userCount);
+
+    })
   }, []);
 
   // for updating the ui of others when current user paused their video/audio
@@ -582,18 +647,37 @@ const Room = () => {
       //   canvasRef.current!.width,
       //   canvasRef.current!.height
       // );
-      const base64String = canvasRef.current!.toDataURL("image/jpeg", 1.0);
+
+      canvasRef.current!.toBlob(blob => {
+        if (blob) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            // `reader.result` contains the binary data
+            const binaryData = reader.result;
+            // if (exerciseChangedRef.current) {
+              // Call startFrameSending when you want to start sending frames
+  
+              const currentTime = Math.floor(Date.now() / 1000);
+            const elapsedSeconds = currentTime - startTime;
+              // socket_client.emit('capture_frames', { user_id: email, exercise:"Jumping Jacks", binaryData: binaryData,timestamp: timestampInSeconds });
+              socket2.emit('capture_frames', { user_id: usersId, exercise:"Jumping Jacks", binaryData: binaryData, timestamp: elapsedSeconds });
+            // }
+          };
+          reader.readAsArrayBuffer(blob);
+        }
+      }, 'image/jpeg');
+      // const base64String = canvasRef.current!.toDataURL("image/jpeg", 1.0);
       setCountFrames((prevState) => {
         return prevState + 1;
       });
       // console.log(base64String);
       console.log(`Frontend Count: ${count}`);
-      socket2.emit("capture_frames", {
-        binaryData: base64String,
-        reps: exerciseRef.current,
-        exercise: exerciseNameRef.current,
-        group_id: paramId?.groupId,
-      });
+      // socket2.emit("capture_frames", {
+      //   binaryData: base64String,
+      //   reps: exerciseRef.current,
+      //   exercise: exerciseNameRef.current,
+      //   group_id: paramId?.groupId,
+      // });
 
       // requestAnimationFrame(captureFrame);
     } catch (err) {
@@ -601,10 +685,18 @@ const Room = () => {
     }
   };
 
+  let startTime: number;
+
   const startCapturingFrame = () => {
+    const durationOfSendingFrames = () => {
+      startTime = Math.floor(Date.now() / 1000);
+      // ... other initialization logic
+    }
+
+    durationOfSendingFrames();
     intervalId.current = setInterval(() => {
       captureFrame();
-    }, 1);
+    }, 1000/3);
   };
 
   const toggleVideo = async () => {
@@ -615,7 +707,7 @@ const Room = () => {
     if (videoProducer.current.paused) {
       // if video is already paused then get a new local webcam stream and update the state
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
         audio: myStream.isAudio,
       });
       ref.current!.srcObject = newStream;

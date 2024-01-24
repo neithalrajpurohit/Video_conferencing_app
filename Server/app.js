@@ -14,7 +14,7 @@ const httpServer = createServer(app);
 //passing cors to let client socket connect with the server socket
 const io = new Server(httpServer, { cors: { origin: "*" } }); //setting socket server which returns io .io on
 // which events like on,emit are performed`
-const port = 3000;
+const port = 3443;
 
 let worker;
 let producers = [];
@@ -61,6 +61,12 @@ const mediacodecs = [
 ];
 
 // setting up connection
+
+const updateAndBroadcastUserCount = (roomName) => {
+  const userCount = Object.keys(rooms[roomName]?.peers || {}).length;
+  console.log(userCount)
+  io.to(roomName).emit("user-count-updated", { userCount});
+}
 //io.emit sends the info to all the sockets connected
 
 io.on("connection", async (socket) => {
@@ -127,6 +133,9 @@ io.on("connection", async (socket) => {
     };
     const rtpCapabilities = router1.rtpCapabilities;
     callback({ rtpCapabilities });
+
+    // Notify all clients in the room about the updated user count
+    updateAndBroadcastUserCount(roomName)
   });
   const createRoom = async (roomName, socketId) => {
     let router1;
@@ -431,7 +440,7 @@ const createWebrtcTransport = async (router) => {
         listenInfos: [
           {
             protocol: "tcp",
-            ip: "192.168.29.17",
+            ip: "192.168.29.141",
           },
         ],
         enableUdp: true,
